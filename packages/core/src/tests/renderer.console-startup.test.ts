@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, spyOn, test } from "bun:test"
 
+import { ANSI } from "../ansi.ts"
 import { capture } from "../console.ts"
 import { clearEnvCache } from "../lib/env.ts"
 import { createTestRenderer, type TestRenderer } from "../testing/test-renderer.js"
@@ -1002,6 +1003,104 @@ test("CliRenderer split-footer starts in settling phase and then pins as output 
   }
 
   expect((renderer as any).renderOffset).toBe(6)
+})
+
+test("CliRenderer split-footer footerHeight changes skip viewport scroll transitions while settling", async () => {
+  const result = await createTestRenderer({
+    width: 40,
+    height: 10,
+    screenMode: "split-footer",
+    footerHeight: 4,
+    externalOutputMode: "capture-stdout",
+    consoleMode: "disabled",
+  })
+
+  renderer = result.renderer
+  ;(renderer as any)._terminalIsSetup = true
+
+  const writes: string[] = []
+  const originalWriteOut = (renderer as any).writeOut.bind(renderer)
+  ;(renderer as any).writeOut = (data: string) => {
+    writes.push(data)
+    return originalWriteOut(data)
+  }
+
+  renderer.footerHeight = 8
+  renderer.footerHeight = 3
+
+  const output = writes.join("")
+
+  expect((renderer as any).renderOffset).toBe(1)
+  expect(output).not.toContain(ANSI.scrollUp(4))
+  expect(output).not.toContain(ANSI.scrollDown(5))
+
+  ;(renderer as any).writeOut = originalWriteOut
+})
+
+test("CliRenderer split-footer footerHeight shrink clears stale rows when settling", async () => {
+  const result = await createTestRenderer({
+    width: 40,
+    height: 10,
+    screenMode: "split-footer",
+    footerHeight: 4,
+    externalOutputMode: "capture-stdout",
+    consoleMode: "disabled",
+  })
+
+  renderer = result.renderer
+  ;(renderer as any)._terminalIsSetup = true
+
+  const writes: string[] = []
+  const originalWriteOut = (renderer as any).writeOut.bind(renderer)
+  ;(renderer as any).writeOut = (data: string) => {
+    writes.push(data)
+    return originalWriteOut(data)
+  }
+
+  renderer.footerHeight = 8
+  renderer.footerHeight = 3
+
+  const output = writes.join("")
+
+  expect(output).toContain("\x1b[5;1H\x1b[2K")
+  expect(output).toContain("\x1b[9;1H\x1b[2K")
+
+  ;(renderer as any).writeOut = originalWriteOut
+})
+
+test("CliRenderer split-footer footerHeight changes keep viewport scroll transitions once pinned", async () => {
+  const result = await createTestRenderer({
+    width: 40,
+    height: 10,
+    screenMode: "split-footer",
+    footerHeight: 4,
+    externalOutputMode: "capture-stdout",
+    consoleMode: "disabled",
+  })
+
+  renderer = result.renderer
+  ;(renderer as any)._terminalIsSetup = true
+
+  for (let i = 0; i < 12; i += 1) {
+    ;(renderer as any).stdout.write(`line-${i}\n`)
+    await result.renderOnce()
+  }
+
+  expect((renderer as any).renderOffset).toBe(6)
+
+  const writes: string[] = []
+  const originalWriteOut = (renderer as any).writeOut.bind(renderer)
+  ;(renderer as any).writeOut = (data: string) => {
+    writes.push(data)
+    return originalWriteOut(data)
+  }
+
+  renderer.footerHeight = 3
+
+  const output = writes.join("")
+  expect(output).toContain(ANSI.scrollDown(1))
+
+  ;(renderer as any).writeOut = originalWriteOut
 })
 
 test("CliRenderer entering split capture seeds from current terminal cursor row", async () => {

@@ -1789,6 +1789,41 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     }
   }
 
+  private clearStaleSplitSurfaceRows(
+    previousTopLine: number,
+    previousHeight: number,
+    nextTopLine: number,
+    nextHeight: number,
+  ): void {
+    if (!this._terminalIsSetup || previousHeight <= 0 || this._terminalHeight <= 0) {
+      return
+    }
+
+    const terminalBottom = this._terminalHeight
+    const previousStart = Math.max(1, previousTopLine)
+    const previousEnd = Math.min(terminalBottom, previousTopLine + previousHeight - 1)
+
+    if (previousEnd < previousStart) {
+      return
+    }
+
+    const nextStart = Math.max(1, nextTopLine)
+    const nextEnd = Math.min(terminalBottom, nextTopLine + Math.max(nextHeight, 0) - 1)
+
+    let clear = ""
+    for (let line = previousStart; line <= previousEnd; line += 1) {
+      if (line >= nextStart && line <= nextEnd) {
+        continue
+      }
+
+      clear += `${ANSI.moveCursor(line, 1)}\x1b[2K`
+    }
+
+    if (clear.length > 0) {
+      this.writeOut(clear)
+    }
+  }
+
   private applyScreenMode(screenMode: ScreenMode, emitResize: boolean = true, requestRender: boolean = true): void {
     const prevScreenMode = this._screenMode
     const prevSplitHeight = this._splitHeight
@@ -1813,12 +1848,17 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       this.flushPendingSplitOutputBeforeTransition()
     }
 
+    const previousSurfaceTopLine = this.renderOffset + 1
+    const previousPinnedRenderOffset = Math.max(this._terminalHeight - prevSplitHeight, 0)
+    const splitWasSettled = prevSplitHeight === 0 || this.renderOffset >= previousPinnedRenderOffset
+    const shouldUseViewportScrollTransitions = this._externalOutputMode !== "capture-stdout" || splitWasSettled
+
     if (this._terminalIsSetup && leavingSplitFooter) {
       this.renderOffset = 0
       this.lib.setRenderOffset(this.rendererPtr, 0)
     }
 
-    if (this._terminalIsSetup && !terminalScreenModeChanged) {
+    if (this._terminalIsSetup && !terminalScreenModeChanged && shouldUseViewportScrollTransitions) {
       if (prevSplitHeight === 0 && nextSplitHeight > 0) {
         const freedLines = this._terminalHeight - nextSplitHeight
         const scrollDown = ANSI.scrollDown(freedLines)
@@ -1846,6 +1886,10 @@ export class CliRenderer extends EventEmitter implements RenderContext {
         this.resetSplitScrollback(this.getSplitCursorSeedRows())
       } else {
         this.syncSplitScrollback()
+      }
+
+      if (!shouldUseViewportScrollTransitions && prevSplitHeight > 0 && nextSplitHeight > 0) {
+        this.clearStaleSplitSurfaceRows(previousSurfaceTopLine, prevSplitHeight, this.renderOffset + 1, nextSplitHeight)
       }
     } else {
       this.syncSplitFooterState()
