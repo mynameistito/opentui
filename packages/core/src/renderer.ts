@@ -1905,8 +1905,8 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       this.pendingSplitStartupCursorSeed && this.splitStartupSeedTimeoutId !== null
     const splitTransitionSourceTopLine = this.pendingSplitFooterTransition?.sourceTopLine ?? previousSurfaceTopLine
     const splitTransitionSourceHeight = this.pendingSplitFooterTransition?.sourceHeight ?? prevSplitHeight
-    const splitTransitionMode = this.pendingSplitFooterTransition?.mode ??
-      (splitWasSettled ? "viewport-scroll" : "clear-stale-rows")
+    const splitTransitionMode =
+      this.pendingSplitFooterTransition?.mode ?? (splitWasSettled ? "viewport-scroll" : "clear-stale-rows")
 
     if (this._terminalIsSetup && leavingSplitFooter) {
       this.clearPendingSplitFooterTransition()
@@ -2696,6 +2696,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       this.flushPendingSplitOutputBeforeTransition()
     }
 
+    const pendingSplitFooterTransition = this.pendingSplitFooterTransition
     const previousGeometry = calculateRenderGeometry(
       this._screenMode,
       this._terminalWidth,
@@ -2703,7 +2704,9 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       this._footerHeight,
     )
     const prevWidth = this._terminalWidth
-    const visiblePreviousSplitHeight = this.pendingSplitFooterTransition?.sourceHeight ?? previousGeometry.effectiveFooterHeight
+    const previousTerminalHeight = this._terminalHeight
+    const visiblePreviousSplitHeight =
+      pendingSplitFooterTransition?.sourceHeight ?? previousGeometry.effectiveFooterHeight
 
     this._terminalWidth = width
     this._terminalHeight = height
@@ -2721,9 +2724,23 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     const splitFooterActive = this._screenMode === "split-footer"
 
     if (splitFooterActive) {
+      // Width shrink historically needs a broader scrub band, but if resize interrupts
+      // a deferred footer transition we also need to clear from that visible source surface.
+      let clearStart: number | null = null
+
       if (width < prevWidth && visiblePreviousSplitHeight > 0) {
-        const start = Math.max(this._terminalHeight - visiblePreviousSplitHeight * 2, 1)
-        const flush = ANSI.moveCursorAndClear(start, 1)
+        clearStart = Math.max(previousTerminalHeight - visiblePreviousSplitHeight * 2, 1)
+      }
+
+      if (pendingSplitFooterTransition !== null) {
+        clearStart =
+          clearStart === null
+            ? pendingSplitFooterTransition.sourceTopLine
+            : Math.min(clearStart, pendingSplitFooterTransition.sourceTopLine)
+      }
+
+      if (clearStart !== null) {
+        const flush = ANSI.moveCursorAndClear(clearStart, 1)
         this.writeOut(flush)
       }
 

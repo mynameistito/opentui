@@ -1134,6 +1134,64 @@ test("CliRenderer split-footer resize cleanup uses the visible footer surface wh
   writeOutSpy.mockRestore()
 })
 
+test("CliRenderer split-footer resize cleanup uses the visible source top line across width and height resize while a deferred footer transition is pending", async () => {
+  const result = await createTestRenderer({
+    width: 40,
+    height: 10,
+    screenMode: "split-footer",
+    footerHeight: 4,
+    externalOutputMode: "capture-stdout",
+    consoleMode: "disabled",
+  })
+
+  renderer = result.renderer
+  ;(renderer as any)._terminalIsSetup = true
+
+  const writeOutSpy = spyOn(renderer as any, "writeOut")
+
+  renderer.footerHeight = 3
+
+  expect((renderer as any).pendingSplitFooterTransition).toEqual({
+    mode: "clear-stale-rows",
+    sourceTopLine: 2,
+    sourceHeight: 4,
+    targetTopLine: 2,
+    targetHeight: 3,
+  })
+
+  result.resize(20, 12)
+
+  expect(writeOutSpy).toHaveBeenCalledTimes(1)
+  expect(writeOutSpy.mock.calls[0]?.[0]).toBe(ANSI.moveCursorAndClear(2, 1))
+
+  writeOutSpy.mockRestore()
+})
+
+test("CliRenderer split-footer resize cleanup still clears the visible source surface when only height changes while a deferred footer transition is pending", async () => {
+  const result = await createTestRenderer({
+    width: 40,
+    height: 10,
+    screenMode: "split-footer",
+    footerHeight: 4,
+    externalOutputMode: "capture-stdout",
+    consoleMode: "disabled",
+  })
+
+  renderer = result.renderer
+  ;(renderer as any)._terminalIsSetup = true
+
+  const writeOutSpy = spyOn(renderer as any, "writeOut")
+
+  renderer.footerHeight = 3
+
+  result.resize(40, 12)
+
+  expect(writeOutSpy).toHaveBeenCalledTimes(1)
+  expect(writeOutSpy.mock.calls[0]?.[0]).toBe(ANSI.moveCursorAndClear(2, 1))
+
+  writeOutSpy.mockRestore()
+})
+
 test("CliRenderer split-footer footerHeight changes do not queue deferred transitions while startup cursor seeding blocks the first frame", async () => {
   const result = await createTestRenderer({
     width: 40,
