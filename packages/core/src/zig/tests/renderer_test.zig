@@ -1348,6 +1348,88 @@ test "renderer - repaintSplitFooter repaints footer without append payload" {
     try std.testing.expect(sync_index.? < footer_text_index.?);
 }
 
+test "renderer - repaintSplitFooter applies pending viewport scroll transition in one frame" {
+    const pool = gp.initGlobalPool(std.testing.allocator);
+    defer gp.deinitGlobalPool();
+    var local_link_pool = link.LinkPool.init(std.testing.allocator);
+    defer local_link_pool.deinit();
+
+    var cli_renderer = try CliRenderer.create(
+        std.testing.allocator,
+        12,
+        1,
+        pool,
+        true,
+    );
+    defer cli_renderer.destroy();
+
+    _ = cli_renderer.resetSplitScrollback(4, 4);
+    cli_renderer.setRenderOffset(3);
+    cli_renderer.setPendingSplitFooterTransition(.viewport_scroll, 4, 2, 5, 1);
+
+    const next_buffer = cli_renderer.getNextBuffer();
+    const fg = RGBA{ 1.0, 1.0, 1.0, 1.0 };
+    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
+    try next_buffer.drawText("FOOT", 0, 0, fg, bg, 0);
+
+    _ = cli_renderer.repaintSplitFooter(4, true);
+
+    const output = cli_renderer.getLastOutputForTest();
+    const sync_index = std.mem.indexOf(u8, output, ansi.ANSI.syncSet);
+    const scroll_index = std.mem.indexOf(u8, output, "\x1b[1T");
+    const footer_move_index = std.mem.indexOf(u8, output, "\x1b[5;1H");
+    const footer_text_index = std.mem.indexOf(u8, output, "FOOT");
+
+    try std.testing.expect(sync_index != null);
+    try std.testing.expect(scroll_index != null);
+    try std.testing.expect(footer_move_index != null);
+    try std.testing.expect(footer_text_index != null);
+    try std.testing.expect(sync_index.? < scroll_index.?);
+    try std.testing.expect(scroll_index.? < footer_move_index.?);
+    try std.testing.expect(footer_move_index.? < footer_text_index.?);
+    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, output, ansi.ANSI.syncSet));
+    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, output, ansi.ANSI.syncReset));
+}
+
+test "renderer - repaintSplitFooter applies pending stale row clear transition in one frame" {
+    const pool = gp.initGlobalPool(std.testing.allocator);
+    defer gp.deinitGlobalPool();
+    var local_link_pool = link.LinkPool.init(std.testing.allocator);
+    defer local_link_pool.deinit();
+
+    var cli_renderer = try CliRenderer.create(
+        std.testing.allocator,
+        12,
+        3,
+        pool,
+        true,
+    );
+    defer cli_renderer.destroy();
+
+    _ = cli_renderer.resetSplitScrollback(1, 7);
+    cli_renderer.setPendingSplitFooterTransition(.clear_stale_rows, 2, 4, 2, 3);
+
+    const next_buffer = cli_renderer.getNextBuffer();
+    const fg = RGBA{ 1.0, 1.0, 1.0, 1.0 };
+    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
+    try next_buffer.drawText("FOOT", 0, 0, fg, bg, 0);
+
+    _ = cli_renderer.repaintSplitFooter(7, true);
+
+    const output = cli_renderer.getLastOutputForTest();
+    const sync_index = std.mem.indexOf(u8, output, ansi.ANSI.syncSet);
+    const clear_index = std.mem.indexOf(u8, output, "\x1b[5;1H\x1b[2K");
+    const footer_text_index = std.mem.indexOf(u8, output, "FOOT");
+
+    try std.testing.expect(sync_index != null);
+    try std.testing.expect(clear_index != null);
+    try std.testing.expect(footer_text_index != null);
+    try std.testing.expect(sync_index.? < clear_index.?);
+    try std.testing.expect(clear_index.? < footer_text_index.?);
+    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, output, ansi.ANSI.syncSet));
+    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, output, ansi.ANSI.syncReset));
+}
+
 test "renderer - commitSplitFooterSnapshot appends styled snapshot before footer repaint" {
     const pool = gp.initGlobalPool(std.testing.allocator);
     defer gp.deinitGlobalPool();

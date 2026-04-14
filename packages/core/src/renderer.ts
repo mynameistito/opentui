@@ -285,6 +285,14 @@ type ExternalOutputCommit = {
   trailingNewline: boolean
 }
 
+type PendingSplitFooterTransition = {
+  mode: "viewport-scroll" | "clear-stale-rows"
+  sourceTopLine: number
+  sourceHeight: number
+  targetTopLine: number
+  targetHeight: number
+}
+
 class ExternalOutputQueue {
   private commits: ExternalOutputCommit[] = []
 
@@ -371,6 +379,11 @@ class ScrollbackSnapshotRenderContext extends EventEmitter implements RenderCont
   public requestSelectionUpdate(): void {}
   public focusRenderable(renderable: Renderable): void {
     this.currentFocusedRenderable = renderable
+  }
+  public blurRenderable(renderable: Renderable): void {
+    if (this.currentFocusedRenderable === renderable) {
+      this.currentFocusedRenderable = null
+    }
   }
   public registerLifecyclePass(renderable: Renderable): void {
     this.lifecyclePasses.add(renderable)
@@ -730,6 +743,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   private _splitHeight: number = 0
   private renderOffset: number = 0
   private splitTailColumn: number = 0
+  private pendingSplitFooterTransition: PendingSplitFooterTransition | null = null
   // One-shot latch used to request a full split repaint after transitions
   // (resize/mode/output-path changes). Cleared on first renderNative tick.
   private forceFullRepaintRequested: boolean = false
@@ -1322,6 +1336,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     this.stdout.write = mode === "capture-stdout" ? this.interceptStdoutWrite : this.realStdoutWrite
 
     if (this._screenMode === "split-footer" && this._splitHeight > 0 && mode === "capture-stdout") {
+      this.clearPendingSplitFooterTransition()
       this.resetSplitScrollback(this.getSplitCursorSeedRows())
       return
     }
@@ -1332,6 +1347,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       previousMode === "capture-stdout" &&
       mode === "passthrough"
     ) {
+      this.clearPendingSplitFooterTransition()
       return
     }
 
@@ -1699,6 +1715,8 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       )
     }
 
+    this.pendingSplitFooterTransition = null
+
     if (this.externalOutputQueue.size > 0) {
       // Preserve FIFO ordering without doing unbounded work in one tick.
       // This keeps sustained stdout bursts smooth instead of blocking on one frame.
@@ -1768,10 +1786,32 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     this.renderOffset = this.lib.syncSplitScrollback(this.rendererPtr, this.getSplitPinnedRenderOffset())
   }
 
+  private clearPendingSplitFooterTransition(): void {
+    if (this.pendingSplitFooterTransition === null) {
+      return
+    }
+
+    this.pendingSplitFooterTransition = null
+    this.lib.clearPendingSplitFooterTransition(this.rendererPtr)
+  }
+
+  private setPendingSplitFooterTransition(transition: PendingSplitFooterTransition): void {
+    this.pendingSplitFooterTransition = transition
+    this.lib.setPendingSplitFooterTransition(
+      this.rendererPtr,
+      transition.mode === "viewport-scroll" ? 1 : 2,
+      transition.sourceTopLine,
+      transition.sourceHeight,
+      transition.targetTopLine,
+      transition.targetHeight,
+    )
+  }
+
   private syncSplitFooterState(): void {
     const splitActive = this._screenMode === "split-footer" && this._splitHeight > 0
 
     if (!splitActive) {
+      this.clearPendingSplitFooterTransition()
       this.splitTailColumn = 0
       this.lib.resetSplitScrollback(this.rendererPtr, 0, 0)
       this.renderOffset = 0
@@ -1782,6 +1822,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     if (this._externalOutputMode === "capture-stdout") {
       this.syncSplitScrollback()
     } else {
+      this.clearPendingSplitFooterTransition()
       this.splitTailColumn = 0
       this.lib.resetSplitScrollback(this.rendererPtr, 0, 0)
       this.renderOffset = this.getSplitPinnedRenderOffset()
@@ -1852,13 +1893,33 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     const previousPinnedRenderOffset = Math.max(this._terminalHeight - prevSplitHeight, 0)
     const splitWasSettled = prevSplitHeight === 0 || this.renderOffset >= previousPinnedRenderOffset
     const shouldUseViewportScrollTransitions = this._externalOutputMode !== "capture-stdout" || splitWasSettled
+    const shouldDeferSplitFooterResizeTransition =
+      this._terminalIsSetup &&
+      prevScreenMode === "split-footer" &&
+      screenMode === "split-footer" &&
+      this._externalOutputMode === "capture-stdout" &&
+      prevSplitHeight > 0 &&
+      nextSplitHeight > 0 &&
+      !terminalScreenModeChanged
+    const splitStartupSeedBlocksFirstNativeFrame =
+      this.pendingSplitStartupCursorSeed && this.splitStartupSeedTimeoutId !== null
+    const splitTransitionSourceTopLine = this.pendingSplitFooterTransition?.sourceTopLine ?? previousSurfaceTopLine
+    const splitTransitionSourceHeight = this.pendingSplitFooterTransition?.sourceHeight ?? prevSplitHeight
+    const splitTransitionMode = this.pendingSplitFooterTransition?.mode ??
+      (splitWasSettled ? "viewport-scroll" : "clear-stale-rows")
 
     if (this._terminalIsSetup && leavingSplitFooter) {
+      this.clearPendingSplitFooterTransition()
       this.renderOffset = 0
       this.lib.setRenderOffset(this.rendererPtr, 0)
     }
 
-    if (this._terminalIsSetup && !terminalScreenModeChanged && shouldUseViewportScrollTransitions) {
+    if (
+      this._terminalIsSetup &&
+      !terminalScreenModeChanged &&
+      shouldUseViewportScrollTransitions &&
+      !shouldDeferSplitFooterResizeTransition
+    ) {
       if (prevSplitHeight === 0 && nextSplitHeight > 0) {
         const freedLines = this._terminalHeight - nextSplitHeight
         const scrollDown = ANSI.scrollDown(freedLines)
@@ -1888,8 +1949,24 @@ export class CliRenderer extends EventEmitter implements RenderContext {
         this.syncSplitScrollback()
       }
 
-      if (!shouldUseViewportScrollTransitions && prevSplitHeight > 0 && nextSplitHeight > 0) {
+      if (shouldDeferSplitFooterResizeTransition) {
+        if (splitStartupSeedBlocksFirstNativeFrame) {
+          this.clearPendingSplitFooterTransition()
+        } else {
+          this.setPendingSplitFooterTransition({
+            mode: splitTransitionMode,
+            sourceTopLine: splitTransitionSourceTopLine,
+            sourceHeight: splitTransitionSourceHeight,
+            targetTopLine: this.renderOffset + 1,
+            targetHeight: nextSplitHeight,
+          })
+        }
+        this.forceFullRepaintRequested = true
+      } else if (!shouldUseViewportScrollTransitions && prevSplitHeight > 0 && nextSplitHeight > 0) {
+        this.clearPendingSplitFooterTransition()
         this.clearStaleSplitSurfaceRows(previousSurfaceTopLine, prevSplitHeight, this.renderOffset + 1, nextSplitHeight)
+      } else {
+        this.clearPendingSplitFooterTransition()
       }
     } else {
       this.syncSplitFooterState()
@@ -2119,6 +2196,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       this._externalOutputMode === "capture-stdout"
     ) {
       this.resetSplitScrollback(this.getSplitCursorSeedRows())
+      this.clearPendingSplitFooterTransition()
       this.pendingSplitStartupCursorSeed = false
       this.updateStdinParserProtocolContext({ startupCursorCprActive: false })
 
@@ -2625,6 +2703,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       this._footerHeight,
     )
     const prevWidth = this._terminalWidth
+    const visiblePreviousSplitHeight = this.pendingSplitFooterTransition?.sourceHeight ?? previousGeometry.effectiveFooterHeight
 
     this._terminalWidth = width
     this._terminalHeight = height
@@ -2642,14 +2721,16 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     const splitFooterActive = this._screenMode === "split-footer"
 
     if (splitFooterActive) {
-      if (width < prevWidth && previousGeometry.effectiveFooterHeight > 0) {
-        const start = this._terminalHeight - previousGeometry.effectiveFooterHeight * 2
+      if (width < prevWidth && visiblePreviousSplitHeight > 0) {
+        const start = Math.max(this._terminalHeight - visiblePreviousSplitHeight * 2, 1)
         const flush = ANSI.moveCursorAndClear(start, 1)
         this.writeOut(flush)
       }
 
       this.currentRenderBuffer.clear(this.backgroundColor)
     }
+
+    this.clearPendingSplitFooterTransition()
 
     this._splitHeight = nextGeometry.effectiveFooterHeight
     this.width = nextGeometry.renderWidth
@@ -3235,8 +3316,10 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       const forceSplitRepaint = this.forceFullRepaintRequested
       this.forceFullRepaintRequested = false
       this.flushPendingSplitCommits(forceSplitRepaint)
+      this.pendingSplitFooterTransition = null
     } else {
       this.forceFullRepaintRequested = false
+      this.pendingSplitFooterTransition = null
       this.lib.render(this.rendererPtr, false)
     }
     // this.dumpStdoutBuffer(Date.now())

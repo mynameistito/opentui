@@ -233,6 +233,27 @@ export fn syncSplitScrollback(rendererPtr: *renderer.CliRenderer, pinnedRenderOf
     return rendererPtr.syncSplitScrollback(pinnedRenderOffset);
 }
 
+export fn setPendingSplitFooterTransition(
+    rendererPtr: *renderer.CliRenderer,
+    mode: u8,
+    sourceTopLine: u32,
+    sourceHeight: u32,
+    targetTopLine: u32,
+    targetHeight: u32,
+) void {
+    rendererPtr.setPendingSplitFooterTransition(
+        @enumFromInt(mode),
+        sourceTopLine,
+        sourceHeight,
+        targetTopLine,
+        targetHeight,
+    );
+}
+
+export fn clearPendingSplitFooterTransition(rendererPtr: *renderer.CliRenderer) void {
+    rendererPtr.clearPendingSplitFooterTransition();
+}
+
 export fn updateStats(rendererPtr: *renderer.CliRenderer, time: f64, fps: u32, frameCallbackTime: f64) void {
     rendererPtr.updateStats(time, fps, frameCallbackTime);
 }

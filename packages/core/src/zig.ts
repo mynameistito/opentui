@@ -170,6 +170,14 @@ function getOpenTUILib(libPath?: string) {
       args: ["ptr", "u32"],
       returns: "u32",
     },
+    setPendingSplitFooterTransition: {
+      args: ["ptr", "u8", "u32", "u32", "u32", "u32"],
+      returns: "void",
+    },
+    clearPendingSplitFooterTransition: {
+      args: ["ptr"],
+      returns: "void",
+    },
     updateStats: {
       args: ["ptr", "f64", "u32", "f64"],
       returns: "void",
@@ -1415,6 +1423,15 @@ export interface RenderLib {
   setRenderOffset: (renderer: Pointer, offset: number) => void
   resetSplitScrollback: (renderer: Pointer, seedRows: number, pinnedRenderOffset: number) => number
   syncSplitScrollback: (renderer: Pointer, pinnedRenderOffset: number) => number
+  setPendingSplitFooterTransition: (
+    renderer: Pointer,
+    mode: number,
+    sourceTopLine: number,
+    sourceHeight: number,
+    targetTopLine: number,
+    targetHeight: number,
+  ) => void
+  clearPendingSplitFooterTransition: (renderer: Pointer) => void
   updateStats: (renderer: Pointer, time: number, fps: number, frameCallbackTime: number) => void
   updateMemoryStats: (renderer: Pointer, heapUsed: number, heapTotal: number, arrayBuffers: number) => void
   render: (renderer: Pointer, force: boolean) => void
@@ -2083,6 +2100,28 @@ class FFIRenderLib implements RenderLib {
 
   public syncSplitScrollback(renderer: Pointer, pinnedRenderOffset: number): number {
     return this.opentui.symbols.syncSplitScrollback(renderer, pinnedRenderOffset)
+  }
+
+  public setPendingSplitFooterTransition(
+    renderer: Pointer,
+    mode: number,
+    sourceTopLine: number,
+    sourceHeight: number,
+    targetTopLine: number,
+    targetHeight: number,
+  ): void {
+    this.opentui.symbols.setPendingSplitFooterTransition(
+      renderer,
+      mode,
+      sourceTopLine,
+      sourceHeight,
+      targetTopLine,
+      targetHeight,
+    )
+  }
+
+  public clearPendingSplitFooterTransition(renderer: Pointer): void {
+    this.opentui.symbols.clearPendingSplitFooterTransition(renderer)
   }
 
   public updateStats(renderer: Pointer, time: number, fps: number, frameCallbackTime: number) {

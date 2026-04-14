@@ -71,6 +71,24 @@ fn snapshotRowEnd(snapshot: *const OptimizedBuffer, row: u32, limit: u32) u32 {
     return 0;
 }
 
+pub const SplitFooterTransitionMode = enum(u8) {
+    none = 0,
+    viewport_scroll = 1,
+    clear_stale_rows = 2,
+};
+
+const SplitFooterTransition = struct {
+    mode: SplitFooterTransitionMode = .none,
+    source_top_line: u32 = 0,
+    source_height: u32 = 0,
+    target_top_line: u32 = 0,
+    target_height: u32 = 0,
+
+    fn clear(self: *SplitFooterTransition) void {
+        self.* = .{};
+    }
+};
+
 pub const CliRenderer = struct {
     width: u32,
     height: u32,
@@ -137,6 +155,7 @@ pub const CliRenderer = struct {
     splitBatchActive: bool = false,
     splitBatchRedrawFooter: bool = false,
     splitBatchDeltaTime: f64 = 0,
+    pendingSplitFooterTransition: SplitFooterTransition = .{},
 
     // Hit grid for mouse event dispatch.
     //
@@ -581,6 +600,65 @@ pub const CliRenderer = struct {
         return self.renderOffset;
     }
 
+    pub fn setPendingSplitFooterTransition(
+        self: *CliRenderer,
+        mode: SplitFooterTransitionMode,
+        source_top_line: u32,
+        source_height: u32,
+        target_top_line: u32,
+        target_height: u32,
+    ) void {
+        self.pendingSplitFooterTransition = .{
+            .mode = mode,
+            .source_top_line = source_top_line,
+            .source_height = source_height,
+            .target_top_line = target_top_line,
+            .target_height = target_height,
+        };
+    }
+
+    pub fn clearPendingSplitFooterTransition(self: *CliRenderer) void {
+        self.pendingSplitFooterTransition.clear();
+    }
+
+    fn applyPendingSplitFooterTransition(self: *CliRenderer, writer: anytype, frame_started: *bool) void {
+        const transition = self.pendingSplitFooterTransition;
+        defer self.pendingSplitFooterTransition.clear();
+
+        if (transition.mode == .none or transition.source_height == 0 or transition.target_height == 0) {
+            return;
+        }
+
+        if (!frame_started.*) {
+            beginRenderFrame(writer);
+            frame_started.* = true;
+        }
+
+        switch (transition.mode) {
+            .viewport_scroll => {
+                if (transition.source_height > transition.target_height) {
+                    writer.print("\x1b[{d}T", .{transition.source_height - transition.target_height}) catch {};
+                } else if (transition.source_height < transition.target_height) {
+                    writer.print("\x1b[{d}S", .{transition.target_height - transition.source_height}) catch {};
+                }
+            },
+            .clear_stale_rows => {
+                const source_end = transition.source_top_line + transition.source_height - 1;
+                const target_end = transition.target_top_line + transition.target_height - 1;
+                var line = transition.source_top_line;
+                while (line <= source_end) : (line += 1) {
+                    if (line >= transition.target_top_line and line <= target_end) {
+                        continue;
+                    }
+
+                    ansi.ANSI.moveToOutput(writer, 1, line) catch {};
+                    writer.writeAll("\x1b[2K") catch {};
+                }
+            },
+            .none => {},
+        }
+    }
+
     fn resetActiveOutputBuffer() void {
         // TODO: check if we need to guard this with a mutex when threading is enabled. It should be safe as long as the
         // render thread only reads from the current buffer after the main thread has finished writing and signaled
@@ -685,6 +763,8 @@ pub const CliRenderer = struct {
             resetActiveOutputBuffer();
             const writer = OutputBufferWriter.writer();
             beginRenderFrame(writer);
+            var frame_started = true;
+            self.applyPendingSplitFooterTransition(writer, &frame_started);
 
             // Track batch lifetime so subsequent calls can append into the same
             // output buffer without restarting frame state.
@@ -1087,6 +1167,7 @@ pub const CliRenderer = struct {
         // cursor state, and pointer state are unchanged, frame_started stays false
         // and we emit nothing at all for this tick.
         var frame_started = sync_started;
+        self.applyPendingSplitFooterTransition(writer, &frame_started);
 
         var currentFg: ?RGBA = null;
         var currentBg: ?RGBA = null;
