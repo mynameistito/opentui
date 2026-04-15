@@ -1,0 +1,29 @@
+packages/core/src/zig/terminal.zig
+  70782c775370dfcb 212-214
+packages/core/src/zig/ansi.zig
+  70782c775370dfcb 64-71
+packages/core/src/renderer.ts
+  70782c775370dfcb 1958-1966
+packages/core/src/zig/renderer.zig
+  70782c775370dfcb 503-514
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.8",
+  "base_commit_sha": "37439f52903bd46f9e71efb57bd02ab5e4834b66",
+  "prompts": {
+    "70782c775370dfcb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "aedda279-545e-4cf3-9b25-614267e77d89",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Tito",
+      "messages": [],
+      "total_additions": 32,
+      "total_deletions": 0,
+      "accepted_lines": 32,
+      "overriden_lines": 0
+    }
+  }
+}
